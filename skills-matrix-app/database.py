@@ -1,9 +1,10 @@
 """SQLite persistence for the skills matrix.
 
-Stores people and their individual question responses. Capability scores
-are derived on demand from the stored responses (see ``scoring.py``) so
-that a change to weights or the scoring model does not require a data
-migration.
+Stores people and their per-capability, per-dimension responses. Each
+capability is rated on every dimension (Knowledge and Delivery), so a
+single response row is keyed on (person, capability, dimension). Domain
+and overall scores are derived on demand (see ``scoring.py``) so changing
+weights or the scoring model needs no data migration.
 """
 
 from __future__ import annotations
@@ -54,8 +55,9 @@ class Database:
                 CREATE TABLE IF NOT EXISTS responses (
                     response_id       TEXT PRIMARY KEY,
                     person_id         TEXT NOT NULL,
-                    question_id       TEXT NOT NULL,
-                    capability_area   TEXT NOT NULL,
+                    capability_id     TEXT NOT NULL,
+                    domain            TEXT NOT NULL,
+                    dimension         TEXT NOT NULL,
                     score             INTEGER NOT NULL,
                     free_text_comment TEXT,
                     timestamp         TEXT NOT NULL,
@@ -65,8 +67,8 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_responses_person
                     ON responses (person_id);
-                CREATE INDEX IF NOT EXISTS idx_responses_capability
-                    ON responses (capability_area);
+                CREATE INDEX IF NOT EXISTS idx_responses_domain
+                    ON responses (domain);
                 """
             )
 
@@ -78,16 +80,17 @@ class Database:
         role: str,
         location: str,
         team: str,
-        responses: Dict[str, dict],
+        responses: List[dict],
     ) -> str:
         """Persist a completed assessment.
 
-        ``responses`` maps question_id -> {"score": int,
-        "capability_area": str, "comment": Optional[str]}.
+        ``responses`` is a list of dicts, one per (capability, dimension)
+        rating: {"capability_id", "domain", "dimension", "score",
+        "comment"}.
 
-        Each submission creates a new person record so that the same name
-        retaking the assessment keeps a full history rather than silently
-        overwriting earlier answers. Returns the new person_id.
+        Each submission creates a new person record so the same name
+        retaking the assessment keeps a history rather than overwriting.
+        Returns the new person_id.
         """
         person_id = str(uuid.uuid4())
         completed = _now_iso()
@@ -98,19 +101,20 @@ class Database:
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (person_id, name, role, location, team, completed),
             )
-            for question_id, payload in responses.items():
+            for r in responses:
                 conn.execute(
                     """INSERT INTO responses
-                       (response_id, person_id, question_id, capability_area,
-                        score, free_text_comment, timestamp)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (response_id, person_id, capability_id, domain,
+                        dimension, score, free_text_comment, timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         str(uuid.uuid4()),
                         person_id,
-                        question_id,
-                        payload["capability_area"],
-                        int(payload["score"]),
-                        payload.get("comment") or None,
+                        r["capability_id"],
+                        r["domain"],
+                        r["dimension"],
+                        int(r["score"]),
+                        r.get("comment") or None,
                         completed,
                     ),
                 )
@@ -121,20 +125,15 @@ class Database:
             conn.execute("DELETE FROM people WHERE person_id = ?", (person_id,))
 
     def import_people(self, people_records: List[dict]) -> int:
-        """Bulk-insert previously exported assessments.
-
-        Each record is the per-person structure produced by
-        :meth:`export_records`. Existing person_ids are skipped so an
-        import is idempotent. Returns the number of people inserted.
-        """
+        """Bulk-insert previously exported assessments (idempotent on
+        person_id). Returns the number of people inserted."""
         inserted = 0
         with self._connect() as conn:
             for rec in people_records:
                 pid = rec.get("person_id") or str(uuid.uuid4())
-                exists = conn.execute(
+                if conn.execute(
                     "SELECT 1 FROM people WHERE person_id = ?", (pid,)
-                ).fetchone()
-                if exists:
+                ).fetchone():
                     continue
                 conn.execute(
                     """INSERT INTO people
@@ -152,14 +151,15 @@ class Database:
                 for resp in rec.get("responses", []):
                     conn.execute(
                         """INSERT INTO responses
-                           (response_id, person_id, question_id,
-                            capability_area, score, free_text_comment, timestamp)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                           (response_id, person_id, capability_id, domain,
+                            dimension, score, free_text_comment, timestamp)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             str(uuid.uuid4()),
                             pid,
-                            resp["question_id"],
-                            resp["capability_area"],
+                            resp["capability_id"],
+                            resp["domain"],
+                            resp["dimension"],
                             int(resp["score"]),
                             resp.get("comment") or resp.get("free_text_comment"),
                             resp.get("timestamp") or _now_iso(),
@@ -194,7 +194,7 @@ class Database:
             )
 
     def export_records(self) -> List[dict]:
-        """Return all people with their nested responses, for export."""
+        """All people with their nested responses, for export/backup."""
         people = self.get_people()
         responses = self.get_responses()
         records = []
@@ -210,8 +210,9 @@ class Database:
                     "date_completed": person["date_completed"],
                     "responses": [
                         {
-                            "question_id": r["question_id"],
-                            "capability_area": r["capability_area"],
+                            "capability_id": r["capability_id"],
+                            "domain": r["domain"],
+                            "dimension": r["dimension"],
                             "score": int(r["score"]),
                             "comment": r["free_text_comment"],
                             "timestamp": r["timestamp"],

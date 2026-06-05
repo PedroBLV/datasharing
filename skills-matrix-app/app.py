@@ -1,9 +1,10 @@
 """Skills Matrix Assessment — Streamlit application.
 
-A lightweight internal app to capture a structured capability assessment,
-score it, and produce individual and team-level insights. Questions,
-capability areas and weights all live in YAML config so the matrix can be
-updated without changing this code.
+A lightweight internal app to capture a structured, two-dimensional
+capability assessment (Knowledge and Delivery), score it, and produce
+individual and team-level insights — plus clean exports for later AI
+analysis. Domains, capabilities, descriptions, weights and the scoring
+scale all live in YAML so the matrix can be updated without code changes.
 
 Run with:  streamlit run app.py
 """
@@ -11,6 +12,7 @@ Run with:  streamlit run app.py
 from __future__ import annotations
 
 import io
+import os
 
 import pandas as pd
 import plotly.express as px
@@ -22,12 +24,13 @@ import export as export_mod
 from config import APP_DIR, ConfigError, load_config
 from database import Database
 from scoring import (
-    build_person_profile,
     people_strong_in,
+    score_person,
     team_averages,
     team_gaps,
     team_matrix,
 )
+from scoring import build_person_profile
 
 st.set_page_config(
     page_title="Skills Matrix Assessment",
@@ -36,17 +39,28 @@ st.set_page_config(
 )
 
 
-# --- Cached resources -----------------------------------------------------
-
-
 @st.cache_resource
 def get_db() -> Database:
     return Database()
 
 
 def get_config():
-    """Load config fresh each run so edits in the Admin tab take effect."""
+    """Load config fresh each run so Admin edits take effect immediately."""
     return load_config()
+
+
+def _scale_options(config):
+    return sorted(config.maturity_levels)
+
+
+def _scale_label(config):
+    return lambda v: f"{v} — {config.maturity_levels[v].label}"
+
+
+def _guidance_text(config, capability) -> str:
+    """Per-capability 0-5 scoring guidance as a single help string."""
+    guidance = config.level_guidance(capability)
+    return "\n\n".join(f"**{lvl}** — {guidance[lvl]}" for lvl in sorted(guidance))
 
 
 # --- Assessment view ------------------------------------------------------
@@ -55,58 +69,75 @@ def get_config():
 def render_assessment(config) -> None:
     st.header("Complete your skills assessment")
     st.caption(
-        "Rate your experience on each capability. The scale rewards "
-        "practical and delivery experience, not just theory."
+        "Rate every capability on two dimensions: **Knowledge** (do you "
+        "understand it?) and **Delivery** (have you shipped it?). They are "
+        "deliberately separate — knowing a thing and having delivered it "
+        "are not the same."
     )
 
-    with st.expander("What do the scores mean?", expanded=False):
+    dims = config.dimensions
+    with st.expander("What do the 0–5 scores mean?", expanded=False):
         for level in sorted(config.maturity_levels):
             ml = config.maturity_levels[level]
             st.markdown(f"**{level} — {ml.label}**: {ml.description}")
+        st.divider()
+        for d in dims:
+            st.markdown(f"**{d.name}** — {d.description}")
+
+    options = _scale_options(config)
+    fmt = _scale_label(config)
 
     with st.form("assessment_form", clear_on_submit=False):
         st.subheader("About you")
-        col1, col2 = st.columns(2)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             name = st.text_input("Name *")
             role = st.text_input("Role", placeholder="e.g. AI Specialist")
-        with col2:
+        with c2:
             team = st.text_input("Team", placeholder="e.g. AI Practice")
             location = st.text_input("Location", placeholder="e.g. London")
 
-        st.divider()
-        scale_labels = {
-            level: f"{level} — {config.maturity_levels[level].label}"
-            for level in sorted(config.maturity_levels)
-        }
-
-        responses: dict = {}
-        for cap in config.capabilities:
-            questions = config.questions_for(cap.id)
-            if not questions:
+        responses: list = []
+        for domain in config.domains:
+            caps = config.capabilities_for(domain.id)
+            if not caps:
                 continue
-            st.subheader(cap.name)
-            if cap.description:
-                st.caption(cap.description)
-            for q in questions:
-                score = st.select_slider(
-                    q.text,
-                    options=sorted(scale_labels),
-                    value=1,
-                    format_func=lambda v: scale_labels[v],
-                    key=f"score_{q.id}",
-                )
-                comment = st.text_input(
-                    "Optional comment",
-                    key=f"comment_{q.id}",
-                    placeholder="Context, recent examples, caveats…",
-                    label_visibility="collapsed",
-                )
-                responses[q.id] = {
-                    "score": score,
-                    "capability_area": cap.id,
-                    "comment": comment.strip() or None,
-                }
+            st.divider()
+            st.subheader(f"{domain.name}  ·  {domain.weight:.0f}%")
+            if domain.description:
+                st.caption(domain.description)
+
+            for cap in caps:
+                # Capability name, description and scoring guidance are
+                # first-class content so two people rate the same thing the
+                # same way — not hidden notes.
+                st.markdown(f"**{cap.name}**")
+                if cap.description:
+                    st.caption(cap.description)
+                guidance = _guidance_text(config, cap)
+                with st.popover("ℹ️ Scoring guidance"):
+                    st.markdown(f"**How to score {cap.name}:**")
+                    st.markdown(guidance)
+
+                rcols = st.columns(2)
+                for col, dim in zip(rcols, dims):
+                    with col:
+                        score = st.select_slider(
+                            f"{dim.name}",
+                            options=options,
+                            value=0,
+                            format_func=fmt,
+                            key=f"score_{cap.id}_{dim.id}",
+                            help=f"{dim.description}\n\n{guidance}",
+                        )
+                        responses.append(
+                            {
+                                "capability_id": cap.id,
+                                "domain": cap.domain,
+                                "dimension": dim.id,
+                                "score": score,
+                            }
+                        )
 
         submitted = st.form_submit_button("Submit assessment", type="primary")
 
@@ -142,9 +173,7 @@ def render_individual(config) -> None:
 
     people = people.copy()
     people["label"] = (
-        people["name"]
-        + "  ·  "
-        + people["date_completed"].str.slice(0, 10).fillna("")
+        people["name"] + "  ·  " + people["date_completed"].str.slice(0, 10).fillna("")
     )
     default_idx = 0
     last = st.session_state.get("last_person_id")
@@ -164,10 +193,14 @@ def render_individual(config) -> None:
         return
 
     profile = build_person_profile(person, responses, config)
+    dims = config.dimensions
 
     top = st.columns([1, 2])
     with top[0]:
-        st.metric("Overall score", f"{profile['overall_score']:.1f} / 5")
+        mcols = st.columns(len(dims))
+        for col, dim in zip(mcols, dims):
+            val = profile["overall"].get(dim.id)
+            col.metric(dim.name, f"{val:.1f} / 5" if val is not None else "—")
         st.markdown(f"**Role:** {person.get('role') or '—'}")
         st.markdown(f"**Team:** {person.get('team') or '—'}")
         st.markdown(f"**Location:** {person.get('location') or '—'}")
@@ -175,63 +208,80 @@ def render_individual(config) -> None:
         st.markdown("##### Summary")
         st.write(profile["summary"])
 
-    # Radar chart of capability scores.
-    scores = profile["scores"]
-    if scores:
-        cats = list(scores.keys())
-        vals = list(scores.values())
+    # Radar: one trace per dimension across domains.
+    domain_scores = profile["domain_scores"]
+    if domain_scores:
+        domain_names = [ds.domain_name for ds in domain_scores.values()]
         radar = go.Figure()
-        radar.add_trace(
-            go.Scatterpolar(
-                r=vals + [vals[0]],
-                theta=cats + [cats[0]],
-                fill="toself",
-                name=person["name"],
+        for dim in dims:
+            vals = [ds.scores.get(dim.id, 0) for ds in domain_scores.values()]
+            radar.add_trace(
+                go.Scatterpolar(
+                    r=vals + [vals[0]],
+                    theta=domain_names + [domain_names[0]],
+                    fill="toself",
+                    name=dim.name,
+                    opacity=0.6,
+                )
             )
-        )
         radar.update_layout(
             polar=dict(radialaxis=dict(visible=True, range=[0, 5])),
-            showlegend=False,
+            showlegend=True,
             margin=dict(l=40, r=40, t=40, b=40),
             height=480,
         )
-        st.plotly_chart(radar, use_container_width=True)
+        st.plotly_chart(radar, width="stretch")
 
     cols = st.columns(3)
     with cols[0]:
-        st.markdown("##### 💪 Strengths")
+        st.markdown("##### 💪 Strongest domains")
         for s in profile["strengths"]:
             st.markdown(f"- {s}")
     with cols[1]:
+        st.markdown("##### 🚢 Genuinely delivered")
+        if profile["delivered_capabilities"]:
+            for d in profile["delivered_capabilities"]:
+                st.markdown(f"- {d}")
+        else:
+            st.caption("No capability rated 4+ on Delivery yet.")
+    with cols[2]:
         st.markdown("##### 📈 Development areas")
         for d in profile["development_areas"]:
             st.markdown(f"- {d}")
-    with cols[2]:
-        st.markdown("##### ⚠️ Confidence gaps")
-        if profile["confidence_gaps"]:
-            for g in profile["confidence_gaps"]:
-                st.markdown(f"- {g}")
-        else:
-            st.caption("None — scores are consistent within each area.")
+
+    st.markdown("##### ⚠️ Knowledge ahead of delivery")
+    st.caption(
+        "Capabilities understood better than they've been shipped — the "
+        "'read about it but never built it' signal."
+    )
+    if profile["knowledge_delivery_gaps"]:
+        gap_df = pd.DataFrame(profile["knowledge_delivery_gaps"])
+        gap_df = gap_df.rename(
+            columns={
+                "capability": "Capability",
+                "knowledge": "Knowledge",
+                "delivery": "Delivery",
+                "gap": "Gap",
+            }
+        )
+        st.dataframe(gap_df, width="stretch", hide_index=True)
+    else:
+        st.caption("None — knowledge and delivery are well matched.")
 
     st.markdown("##### Suggested next steps")
     for step in profile["next_steps"]:
         st.markdown(f"- {step}")
 
-    with st.expander("Detailed scores by capability"):
-        detail = pd.DataFrame(
-            [
-                {
-                    "Capability": cs.capability_name,
-                    "Raw score": cs.raw_score,
-                    "Weighted score": cs.weighted_score,
-                    "Maturity": f"{cs.maturity_level} — {cs.maturity_label}",
-                    "Questions": cs.num_questions,
-                }
-                for cs in profile["capability_scores"].values()
-            ]
-        )
-        st.dataframe(detail, use_container_width=True, hide_index=True)
+    with st.expander("Detailed scores by domain"):
+        rows = []
+        for ds in profile["domain_scores"].values():
+            row = {"Domain": ds.domain_name}
+            for dim in dims:
+                row[dim.name] = ds.scores.get(dim.id)
+            row["Gap (K−D)"] = ds.gap()
+            row["Capabilities"] = ds.num_capabilities
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
 # --- Team view ------------------------------------------------------------
@@ -246,9 +296,15 @@ def render_team(config) -> None:
         st.info("No assessments yet. Complete one in the Assessment tab.")
         return
 
-    matrix = team_matrix(people, responses, config)
+    dims = config.dimensions
+    dim_by_name = {d.name: d for d in dims}
+    chosen_name = st.radio(
+        "Dimension", list(dim_by_name), horizontal=True
+    )
+    dimension = dim_by_name[chosen_name].id
 
-    # Filters.
+    matrix = team_matrix(people, responses, config, dimension)
+
     with st.expander("Filters", expanded=False):
         fcols = st.columns(3)
         with fcols[0]:
@@ -268,55 +324,85 @@ def render_team(config) -> None:
         st.warning("No people match the selected filters.")
         return
 
-    st.caption(f"{len(matrix)} people in view.")
+    st.caption(f"{len(matrix)} people in view · showing **{chosen_name}** scores.")
     averages = team_averages(matrix, config)
 
-    # Heatmap of person x capability.
-    cap_cols = [c.name for c in config.capabilities if c.name in matrix.columns]
-    heat_df = matrix.set_index("name")[cap_cols]
+    domain_cols = [d.name for d in config.domains if d.name in matrix.columns]
+    heat_df = matrix.set_index("name")[domain_cols]
     fig = px.imshow(
         heat_df,
         color_continuous_scale="Blues",
-        zmin=1,
+        zmin=0,
         zmax=5,
         aspect="auto",
-        labels=dict(color="Score"),
+        labels=dict(color=chosen_name),
     )
     fig.update_layout(
         height=max(360, 40 * len(heat_df) + 160),
-        margin=dict(l=40, r=40, t=40, b=120),
+        margin=dict(l=40, r=40, t=40, b=140),
     )
-    st.markdown("##### Capability heatmap")
-    st.plotly_chart(fig, use_container_width=True)
+    st.markdown(f"##### Capability heatmap — {chosen_name}")
+    st.plotly_chart(fig, width="stretch")
+
+    # Knowledge vs Delivery scatter — the headline distinction.
+    st.markdown("##### Knowledge vs Delivery (overall, per person)")
+    st.caption(
+        "Above the diagonal: knows more than they've shipped. On/below: "
+        "delivery keeps pace with knowledge."
+    )
+    scatter_rows = []
+    keep_ids = set(matrix["person_id"])
+    for _, person in people[people["person_id"].isin(keep_ids)].iterrows():
+        pr = responses[responses["person_id"] == person["person_id"]]
+        overall = score_person(pr, config)["overall"]
+        scatter_rows.append(
+            {
+                "name": person["name"],
+                "Knowledge": overall.get("knowledge"),
+                "Delivery": overall.get("delivery"),
+            }
+        )
+    sdf = pd.DataFrame(scatter_rows).dropna(subset=["Knowledge", "Delivery"])
+    if not sdf.empty:
+        scat = px.scatter(
+            sdf,
+            x="Knowledge",
+            y="Delivery",
+            text="name",
+            range_x=[0, 5],
+            range_y=[0, 5],
+        )
+        scat.add_shape(
+            type="line", x0=0, y0=0, x1=5, y1=5, line=dict(dash="dash", color="grey")
+        )
+        scat.update_traces(textposition="top center")
+        scat.update_layout(height=460, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(scat, width="stretch")
 
     left, right = st.columns(2)
     with left:
-        st.markdown("##### Average score by area")
+        st.markdown(f"##### Average {chosen_name} by domain")
         avg_df = averages.rename("Average").reset_index()
-        avg_df.columns = ["Capability", "Average"]
+        avg_df.columns = ["Domain", "Average"]
         bar = px.bar(
-            avg_df,
-            x="Average",
-            y="Capability",
-            orientation="h",
-            range_x=[0, 5],
+            avg_df, x="Average", y="Domain", orientation="h", range_x=[0, 5]
         )
-        bar.update_layout(height=480, margin=dict(l=10, r=10, t=10, b=10))
-        st.plotly_chart(bar, use_container_width=True)
+        bar.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10))
+        st.plotly_chart(bar, width="stretch")
     with right:
-        st.markdown("##### Capability gaps across the team")
+        st.markdown("##### Domain gaps across the team")
         gaps = team_gaps(averages)
         if gaps:
             for g in gaps:
                 st.markdown(f"- **{g}** (team average {averages[g]:.1f})")
         else:
-            st.caption("No capability area is below the 3.0 team threshold.")
+            st.caption("No domain is below the 3.0 team threshold.")
 
-        st.markdown("##### People strong in each capability (≥ 4.0)")
+        st.markdown(f"##### Strong in each domain ({chosen_name} ≥ 4.0)")
         strong = people_strong_in(matrix, config)
-        for cap_name, names in strong.items():
+        for dom_name, names in strong.items():
             if names:
-                st.markdown(f"- **{cap_name}**: {', '.join(names)}")
+                st.markdown(f"- **{dom_name}**: {', '.join(names)}")
 
 
 def _multiselect_filter(label: str, series: pd.Series):
@@ -339,18 +425,16 @@ def render_admin(config) -> None:
     else:
         ecols = st.columns(3)
         with ecols[0]:
-            csv_data = export_mod.people_scores_csv(people, responses, config)
             st.download_button(
                 "Download scores CSV",
-                data=csv_data,
+                data=export_mod.people_scores_csv(people, responses, config),
                 file_name="team_results.csv",
                 mime="text/csv",
             )
         with ecols[1]:
-            json_data = export_mod.ai_ready_json(people, responses, config)
             st.download_button(
                 "Download AI-ready JSON",
-                data=json_data,
+                data=export_mod.ai_ready_json(people, responses, config),
                 file_name="team_results.json",
                 mime="application/json",
             )
@@ -378,20 +462,20 @@ def render_admin(config) -> None:
             st.error(f"Could not import file: {exc}")
 
     st.divider()
-    st.markdown("##### Update the question set")
+    st.markdown("##### Update the matrix")
     st.caption(
-        "Questions and capability areas live in YAML so the matrix can be "
-        "changed without editing code. Edit below and save."
+        "Domains, capabilities, descriptions, weights and the scoring scale "
+        "all live in YAML so the matrix can change without editing code."
     )
-    qtab, ctab = st.tabs(["questions.yaml", "capabilities.yaml"])
-    _render_yaml_editor(qtab, "questions.yaml")
+    dtab, ctab = st.tabs(["domains.yaml", "capabilities.yaml"])
+    _render_yaml_editor(dtab, "domains.yaml")
     _render_yaml_editor(ctab, "capabilities.yaml")
 
     st.divider()
     st.markdown("##### Manage people")
     if not people.empty:
         view = people[["name", "role", "team", "location", "date_completed"]]
-        st.dataframe(view, use_container_width=True, hide_index=True)
+        st.dataframe(view, width="stretch", hide_index=True)
         to_delete = st.selectbox(
             "Delete an assessment",
             options=["—"] + list(people["person_id"]),
@@ -406,8 +490,6 @@ def render_admin(config) -> None:
 
 
 def _render_yaml_editor(container, filename: str) -> None:
-    import os
-
     path = os.path.join(APP_DIR, filename)
     with container:
         with open(path, "r", encoding="utf-8") as fh:
@@ -417,13 +499,12 @@ def _render_yaml_editor(container, filename: str) -> None:
         )
         if st.button(f"Save {filename}", key=f"save_{filename}"):
             try:
-                yaml.safe_load(edited)  # validate it parses
+                yaml.safe_load(edited)
             except yaml.YAMLError as exc:
                 st.error(f"Not valid YAML: {exc}")
                 return
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(edited)
-            # Validate the whole config still loads consistently.
             try:
                 load_config()
             except ConfigError as exc:
@@ -437,7 +518,7 @@ def _render_yaml_editor(container, filename: str) -> None:
 
 def main() -> None:
     st.sidebar.title("🧭 Skills Matrix")
-    st.sidebar.caption("Capability assessment & team intelligence")
+    st.sidebar.caption("Two-dimensional capability assessment")
 
     try:
         config = get_config()
@@ -445,14 +526,12 @@ def main() -> None:
         st.error(f"Configuration error: {exc}")
         st.stop()
 
-    view = st.sidebar.radio(
-        "View",
-        ["Assessment", "Individual", "Team", "Admin"],
-    )
+    view = st.sidebar.radio("View", ["Assessment", "Individual", "Team", "Admin"])
     st.sidebar.divider()
     st.sidebar.caption(
-        f"{len(config.questions)} questions across "
-        f"{len(config.capabilities)} capability areas."
+        f"{len(config.capabilities)} capabilities across "
+        f"{len(config.domains)} domains, rated on "
+        f"{len(config.dimensions)} dimensions."
     )
 
     if view == "Assessment":

@@ -1,0 +1,93 @@
+# Domains, scoring dimensions and the maturity scale for the skills matrix.
+#
+# This file defines the *shape* of the assessment; capabilities.yaml lists
+# the individual capabilities that are rated. Both live outside the
+# application code so the matrix can evolve without a code change.
+#
+# Each capability is rated on TWO dimensions — Knowledge and Delivery — on
+# the shared 0-5 maturity scale. This deliberately separates "I understand
+# it" from "I have shipped it", so a strong-on-theory / light-on-delivery
+# profile is visible rather than averaged away.
+
+version: 2
+
+# The two axes every capability is scored on.
+dimensions:
+  - id: knowledge
+    name: Knowledge
+    description: >
+      Theoretical understanding and breadth — do you know how it works and
+      when to use it?
+  - id: delivery
+    name: Delivery
+    description: >
+      Hands-on, shipped experience — have you actually built and delivered
+      it, ideally in production?
+
+# Shared 0-5 maturity scale, applied to both dimensions.
+maturity_levels:
+  0:
+    label: Never heard of it
+    description: No awareness of this capability.
+  1:
+    label: Aware
+    description: Understands what it is and roughly when it is useful.
+  2:
+    label: Used with guidance
+    description: Has used it with support or by following examples.
+  3:
+    label: Can deliver independently
+    description: Can apply it independently to deliver work.
+  4:
+    label: Can lead delivery
+    description: Can lead delivery and guide others using it.
+  5:
+    label: Recognised expert / teaches others
+    description: Recognised expert; sets direction, teaches and is the go-to.
+
+# Domains group capabilities and carry the weights used to roll capability
+# scores up into domain and overall scores. Weights are relative; they are
+# normalised at runtime, but are expressed here as percentages summing to
+# 100 for readability.
+domains:
+  - id: ai_ml_foundations
+    name: AI & ML Foundations
+    weight: 20
+    description: >
+      Classical and foundational AI/ML — the statistical and modelling
+      bedrock underneath modern systems.
+
+  - id: genai_agents
+    name: Generative AI & Agents
+    weight: 25
+    description: >
+      Large language models, retrieval, agents and the patterns for
+      building generative AI products.
+
+  - id: engineering_platforms
+    name: Engineering & Platforms
+    weight: 20
+    description: >
+      Software engineering, cloud, data and the operational platforms
+      (MLOps/LLMOps) that run AI in production.
+
+  - id: governance_assurance
+    name: Governance & Assurance
+    weight: 10
+    description: >
+      Responsible AI, security, compliance and the assurance practices
+      that make AI safe and trustworthy.
+
+  - id: delivery_consulting
+    name: Delivery & Consulting
+    weight: 15
+    description: >
+      Shaping and delivering engagements — discovery, solution design and
+      leading delivery end to end.
+
+  - id: commercial_market
+    name: Commercial & Market Engagement
+    weight: 10
+    description: >
+      Pre-sales, storytelling and commercial awareness — winning and
+      growing AI work.

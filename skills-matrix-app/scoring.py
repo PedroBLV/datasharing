@@ -1,231 +1,336 @@
 """Scoring logic for the skills matrix.
 
-All scoring is derived from raw question responses plus the weights in the
-YAML configuration, so the model can be re-tuned without touching stored
-data. The headline numbers are:
+Every capability is rated on two dimensions — Knowledge and Delivery — on
+the 0-5 maturity scale. Scores roll up by capability weight within a
+domain, and by domain weight across domains. Keeping the two dimensions
+separate is the point: it distinguishes people who *know* a thing from
+people who have *delivered* it.
 
-* ``raw_score``      - simple mean of question scores in a capability area.
-* ``weighted_score`` - question-weight-weighted mean within a capability.
-* ``overall``        - capability-weight-weighted mean across capabilities.
-* ``maturity_level`` - the weighted score rounded to the nearest maturity
-                       band and mapped to its label.
+Headline numbers, per dimension:
+
+* domain score    - capability-weight-weighted mean within a domain.
+* overall score   - domain-weight-weighted mean across domains.
+* maturity level  - score rounded to the nearest 0-5 band.
+
+Plus the **knowledge-delivery gap** (knowledge minus delivery), which
+surfaces capabilities understood in theory but not yet shipped.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import pandas as pd
 
 from config import Config
 
-# How many capability areas to surface as strengths / development areas.
+# How many domains to surface as strengths / development areas.
 TOP_N = 3
-# A confidence gap is an area whose questions disagree strongly: the
-# person is clearly experienced on some and not others within one area.
-CONFIDENCE_GAP_SPREAD = 2.0
+# Knowledge running this far ahead of delivery flags "knows it, hasn't
+# shipped it".
+KNOWLEDGE_DELIVERY_GAP = 2.0
+# Delivery at/above this counts as a genuine, shipped strength.
+DELIVERY_STRENGTH = 4.0
 
 
 @dataclass
 class CapabilityScore:
     capability_id: str
     capability_name: str
-    raw_score: float
-    weighted_score: float
-    maturity_level: int
-    maturity_label: str
-    num_questions: int
-    spread: float  # max-min of question scores within the area
+    domain: str
+    scores: Dict[str, float] = field(default_factory=dict)  # dim_id -> score
+
+    def gap(self) -> Optional[float]:
+        k = self.scores.get("knowledge")
+        d = self.scores.get("delivery")
+        if k is None or d is None:
+            return None
+        return round(k - d, 2)
 
 
-def maturity_label(level: int, config: Config) -> str:
+@dataclass
+class DomainScore:
+    domain_id: str
+    domain_name: str
+    weight: float
+    scores: Dict[str, float] = field(default_factory=dict)  # dim_id -> score
+    num_capabilities: int = 0
+
+    def gap(self) -> Optional[float]:
+        k = self.scores.get("knowledge")
+        d = self.scores.get("delivery")
+        if k is None or d is None:
+            return None
+        return round(k - d, 2)
+
+
+def maturity_label(score: float, config: Config) -> str:
+    level = max(0, min(5, round(score)))
     ml = config.maturity_levels.get(level)
     return ml.label if ml else str(level)
 
 
-def score_person(
-    responses: pd.DataFrame, config: Config
-) -> Dict[str, CapabilityScore]:
-    """Compute per-capability scores for a single person's responses.
+def _weighted_mean(pairs: List[tuple]) -> float:
+    total_w = sum(w for _, w in pairs) or 1.0
+    return sum(v * w for v, w in pairs) / total_w
 
-    ``responses`` must have columns ``question_id`` and ``score``. Only
-    capability areas the person actually answered are returned.
+
+def score_person(responses: pd.DataFrame, config: Config) -> dict:
+    """Compute capability, domain and overall scores for one person.
+
+    Returns a dict with keys: ``capabilities`` (cap_id -> CapabilityScore),
+    ``domains`` (domain_id -> DomainScore), ``overall`` (dim_id -> float)
+    and ``overall_combined`` (float).
     """
-    question_by_id = config.question_by_id
     capability_by_id = config.capability_by_id
+    domain_by_id = config.domain_by_id
+    dim_ids = config.dimension_ids
 
-    # Group raw scores by capability area.
-    by_capability: Dict[str, List[tuple]] = {}
+    # capability_id -> dimension -> score
+    cap_scores: Dict[str, CapabilityScore] = {}
     for _, row in responses.iterrows():
-        q = question_by_id.get(row["question_id"])
-        if q is None:
-            # Question was removed from config; ignore stale response.
-            continue
-        by_capability.setdefault(q.capability_area, []).append(
-            (float(row["score"]), q.weight)
-        )
-
-    results: Dict[str, CapabilityScore] = {}
-    for cap_id, scored in by_capability.items():
-        cap = capability_by_id.get(cap_id)
+        cap = capability_by_id.get(row["capability_id"])
         if cap is None:
-            continue
-        scores = [s for s, _ in scored]
-        weights = [w for _, w in scored]
-        raw = sum(scores) / len(scores)
-        weight_total = sum(weights) or 1.0
-        weighted = sum(s * w for s, w in scored) / weight_total
-        level = max(1, min(5, round(weighted)))
-        results[cap_id] = CapabilityScore(
-            capability_id=cap_id,
-            capability_name=cap.name,
-            raw_score=round(raw, 2),
-            weighted_score=round(weighted, 2),
-            maturity_level=level,
-            maturity_label=maturity_label(level, config),
-            num_questions=len(scores),
-            spread=round(max(scores) - min(scores), 2),
+            continue  # stale response for a removed capability
+        cs = cap_scores.setdefault(
+            cap.id,
+            CapabilityScore(
+                capability_id=cap.id,
+                capability_name=cap.name,
+                domain=cap.domain,
+            ),
         )
-    return results
+        cs.scores[row["dimension"]] = float(row["score"])
 
+    # Roll capabilities up into domains, per dimension.
+    domain_scores: Dict[str, DomainScore] = {}
+    for cap_id, cs in cap_scores.items():
+        cap = capability_by_id[cap_id]
+        domain = domain_by_id.get(cap.domain)
+        if domain is None:
+            continue
+        ds = domain_scores.setdefault(
+            domain.id,
+            DomainScore(
+                domain_id=domain.id,
+                domain_name=domain.name,
+                weight=domain.weight,
+            ),
+        )
+        ds.num_capabilities += 1
 
-def overall_score(
-    capability_scores: Dict[str, CapabilityScore], config: Config
-) -> float:
-    """Capability-weight-weighted mean across all answered capabilities."""
-    if not capability_scores:
-        return 0.0
-    capability_by_id = config.capability_by_id
-    total_w = 0.0
-    total = 0.0
-    for cap_id, cs in capability_scores.items():
-        w = capability_by_id[cap_id].weight if cap_id in capability_by_id else 1.0
-        total += cs.weighted_score * w
-        total_w += w
-    return round(total / (total_w or 1.0), 2)
+    # Compute per-domain per-dimension weighted means.
+    for domain_id, ds in domain_scores.items():
+        for dim in dim_ids:
+            pairs = []
+            for cap_id, cs in cap_scores.items():
+                if capability_by_id[cap_id].domain != domain_id:
+                    continue
+                if dim in cs.scores:
+                    pairs.append((cs.scores[dim], capability_by_id[cap_id].weight))
+            if pairs:
+                ds.scores[dim] = round(_weighted_mean(pairs), 2)
 
+    # Overall per dimension: domain-weight-weighted across domains.
+    overall: Dict[str, float] = {}
+    for dim in dim_ids:
+        pairs = [
+            (ds.scores[dim], ds.weight)
+            for ds in domain_scores.values()
+            if dim in ds.scores
+        ]
+        if pairs:
+            overall[dim] = round(_weighted_mean(pairs), 2)
 
-def strengths_and_gaps(
-    capability_scores: Dict[str, CapabilityScore], top_n: int = TOP_N
-):
-    """Return (strengths, development_areas, confidence_gaps).
-
-    Strengths are the highest-scoring capability areas, development areas
-    the lowest. Confidence gaps are areas with a wide spread of question
-    scores - real experience in part of the area but not all of it.
-    """
-    ordered = sorted(
-        capability_scores.values(), key=lambda c: c.weighted_score, reverse=True
+    overall_combined = (
+        round(sum(overall.values()) / len(overall), 2) if overall else 0.0
     )
-    strengths = [c.capability_name for c in ordered[:top_n]]
-    development = [c.capability_name for c in ordered[-top_n:][::-1]]
-    confidence_gaps = [
-        c.capability_name
-        for c in capability_scores.values()
-        if c.spread >= CONFIDENCE_GAP_SPREAD
+
+    return {
+        "capabilities": cap_scores,
+        "domains": domain_scores,
+        "overall": overall,
+        "overall_combined": overall_combined,
+    }
+
+
+def _combined(ds: DomainScore) -> float:
+    if not ds.scores:
+        return 0.0
+    return sum(ds.scores.values()) / len(ds.scores)
+
+
+def strengths_and_gaps(domain_scores: Dict[str, DomainScore], top_n: int = TOP_N):
+    """Return (strengths, development_areas) by combined domain score."""
+    ordered = sorted(domain_scores.values(), key=_combined, reverse=True)
+    strengths = [d.domain_name for d in ordered[:top_n] if _combined(d) > 0]
+    development = [d.domain_name for d in ordered[-top_n:][::-1]]
+    return strengths, development
+
+
+def knowledge_delivery_gaps(
+    capability_scores: Dict[str, CapabilityScore],
+    threshold: float = KNOWLEDGE_DELIVERY_GAP,
+) -> List[dict]:
+    """Capabilities understood far better than they've been delivered.
+
+    Returns dicts sorted by largest gap first: the classic "I've read
+    about it but never shipped it" signal.
+    """
+    gaps = []
+    for cs in capability_scores.values():
+        g = cs.gap()
+        if g is not None and g >= threshold:
+            gaps.append(
+                {
+                    "capability": cs.capability_name,
+                    "knowledge": cs.scores.get("knowledge"),
+                    "delivery": cs.scores.get("delivery"),
+                    "gap": g,
+                }
+            )
+    return sorted(gaps, key=lambda x: x["gap"], reverse=True)
+
+
+def delivery_strengths(
+    capability_scores: Dict[str, CapabilityScore],
+    threshold: float = DELIVERY_STRENGTH,
+) -> List[str]:
+    """Capabilities the person has genuinely delivered (high delivery)."""
+    return [
+        cs.capability_name
+        for cs in capability_scores.values()
+        if cs.scores.get("delivery", 0) >= threshold
     ]
-    return strengths, development, confidence_gaps
 
 
 def build_person_profile(
     person: dict, responses: pd.DataFrame, config: Config
 ) -> dict:
     """Assemble the full individual profile, including AI-ready summary."""
-    cap_scores = score_person(responses, config)
-    overall = overall_score(cap_scores, config)
-    strengths, development, gaps = strengths_and_gaps(cap_scores)
+    scored = score_person(responses, config)
+    cap_scores = scored["capabilities"]
+    domain_scores = scored["domains"]
+    overall = scored["overall"]
 
-    scores_by_name = {
-        cs.capability_name: cs.weighted_score for cs in cap_scores.values()
+    strengths, development = strengths_and_gaps(domain_scores)
+    kd_gaps = knowledge_delivery_gaps(cap_scores)
+    delivered = delivery_strengths(cap_scores)
+
+    domain_scores_by_name = {
+        ds.domain_name: dict(ds.scores) for ds in domain_scores.values()
     }
 
-    summary = _build_summary(person, strengths, development, gaps, overall)
+    summary = _build_summary(
+        person, overall, strengths, development, kd_gaps, delivered
+    )
 
     return {
         "person": person.get("name"),
         "role": person.get("role"),
         "team": person.get("team"),
         "location": person.get("location"),
-        "overall_score": overall,
-        "scores": scores_by_name,
+        "overall": overall,
+        "overall_combined": scored["overall_combined"],
+        "domain_scores": domain_scores,
+        "domain_scores_by_name": domain_scores_by_name,
         "capability_scores": cap_scores,
         "strengths": strengths,
         "development_areas": development,
-        "confidence_gaps": gaps,
-        "next_steps": _suggested_next_steps(cap_scores),
+        "delivered_capabilities": delivered,
+        "knowledge_delivery_gaps": kd_gaps,
+        "next_steps": _suggested_next_steps(domain_scores, kd_gaps),
         "summary": summary,
     }
 
 
+def _fmt_dim(overall: Dict[str, float]) -> str:
+    parts = []
+    if "knowledge" in overall:
+        parts.append(f"knowledge {overall['knowledge']:.1f}")
+    if "delivery" in overall:
+        parts.append(f"delivery {overall['delivery']:.1f}")
+    return ", ".join(parts)
+
+
 def _build_summary(
     person: dict,
+    overall: Dict[str, float],
     strengths: List[str],
     development: List[str],
-    gaps: List[str],
-    overall: float,
+    kd_gaps: List[dict],
+    delivered: List[str],
 ) -> str:
     name = person.get("name", "This person")
     role = person.get("role")
     parts = [
-        f"{name}{f' ({role})' if role else ''} has an overall capability "
-        f"score of {overall:.1f} out of 5."
+        f"{name}{f' ({role})' if role else ''} scores {_fmt_dim(overall)} "
+        f"out of 5 overall."
     ]
     if strengths:
-        parts.append("Strongest in " + ", ".join(strengths) + ".")
+        parts.append("Strongest domains: " + ", ".join(strengths) + ".")
+    if delivered:
+        parts.append("Genuinely delivered: " + ", ".join(delivered[:5]) + ".")
     if development:
-        parts.append("Development needed around " + ", ".join(development) + ".")
-    if gaps:
-        parts.append(
-            "Uneven experience (confidence gaps) in " + ", ".join(gaps) + "."
+        parts.append("Development needed in " + ", ".join(development) + ".")
+    if kd_gaps:
+        named = ", ".join(
+            f"{g['capability']} (knows {g['knowledge']:.0f}/delivers "
+            f"{g['delivery']:.0f})"
+            for g in kd_gaps[:3]
         )
+        parts.append("Knowledge ahead of delivery in " + named + ".")
     return " ".join(parts)
 
 
 def _suggested_next_steps(
-    capability_scores: Dict[str, CapabilityScore]
+    domain_scores: Dict[str, DomainScore], kd_gaps: List[dict]
 ) -> List[str]:
-    """Heuristic next steps based on the lowest-scoring areas."""
-    steps = []
-    lowest = sorted(
-        capability_scores.values(), key=lambda c: c.weighted_score
-    )[:TOP_N]
-    for cs in lowest:
-        if cs.weighted_score < 2:
+    steps: List[str] = []
+    # Turn the biggest knowledge-delivery gaps into "go and ship it" steps.
+    for g in kd_gaps[:2]:
+        steps.append(
+            f"Convert knowledge into delivery on {g['capability']} — get "
+            f"hands-on and ship it (currently delivery {g['delivery']:.0f})."
+        )
+    # Lowest combined domains get a build-foundations step.
+    lowest = sorted(domain_scores.values(), key=_combined)[:TOP_N]
+    for ds in lowest:
+        c = _combined(ds)
+        if c < 2:
+            steps.append(f"Build foundational experience in {ds.domain_name}.")
+        elif c < 3:
             steps.append(
-                f"Build foundational, hands-on experience in {cs.capability_name}."
+                f"Move from guided use to independent delivery in {ds.domain_name}."
             )
-        elif cs.weighted_score < 3:
-            steps.append(
-                f"Move from experimentation to a working prototype in "
-                f"{cs.capability_name}."
-            )
-        elif cs.weighted_score < 4:
-            steps.append(
-                f"Take {cs.capability_name} into a real client/project delivery."
-            )
-        else:
-            steps.append(
-                f"Lead others or productionise work in {cs.capability_name}."
-            )
-    return steps
+        elif c < 4:
+            steps.append(f"Take {ds.domain_name} into leading delivery.")
+    # De-duplicate while preserving order.
+    seen = set()
+    deduped = []
+    for s in steps:
+        if s not in seen:
+            deduped.append(s)
+            seen.add(s)
+    return deduped
 
 
 # --- Team-level aggregation ----------------------------------------------
 
 
 def team_matrix(
-    people: pd.DataFrame, responses: pd.DataFrame, config: Config
+    people: pd.DataFrame,
+    responses: pd.DataFrame,
+    config: Config,
+    dimension: str,
 ) -> pd.DataFrame:
-    """Return a person x capability matrix of weighted scores.
-
-    Rows are people (indexed by name, with person_id retained), columns
-    are capability names. Used for the team heatmap.
-    """
+    """person x domain matrix of scores for a single dimension."""
+    domain_names = [d.name for d in config.domains]
     rows = []
     for _, person in people.iterrows():
         person_resp = responses[responses["person_id"] == person["person_id"]]
-        cap_scores = score_person(person_resp, config)
+        scored = score_person(person_resp, config)
         row = {
             "person_id": person["person_id"],
             "name": person["name"],
@@ -233,36 +338,38 @@ def team_matrix(
             "team": person["team"],
             "location": person["location"],
         }
-        for cs in cap_scores.values():
-            row[cs.capability_name] = cs.weighted_score
+        for ds in scored["domains"].values():
+            if dimension in ds.scores:
+                row[ds.domain_name] = ds.scores[dimension]
         rows.append(row)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # Keep domain columns in config order where present.
+    ordered = [c for c in domain_names if c in df.columns]
+    meta = [c for c in ["person_id", "name", "role", "team", "location"] if c in df.columns]
+    return df[meta + ordered] if not df.empty else df
 
 
 def team_averages(matrix: pd.DataFrame, config: Config) -> pd.Series:
-    """Mean score per capability area across the team."""
-    cap_names = [c.name for c in config.capabilities]
-    present = [c for c in cap_names if c in matrix.columns]
+    """Mean score per domain across the team (for one dimension matrix)."""
+    domain_names = [d.name for d in config.domains]
+    present = [c for c in domain_names if c in matrix.columns]
     if not present:
         return pd.Series(dtype=float)
     return matrix[present].mean().round(2).sort_values(ascending=False)
 
 
 def people_strong_in(
-    matrix: pd.DataFrame, config: Config, threshold: float = 4.0
+    matrix: pd.DataFrame, config: Config, threshold: float = DELIVERY_STRENGTH
 ) -> Dict[str, List[str]]:
-    """Map each capability to the people scoring at/above ``threshold``."""
+    """Map each domain to people scoring at/above ``threshold`` (one dim)."""
     result: Dict[str, List[str]] = {}
-    for cap in config.capabilities:
-        if cap.name not in matrix.columns:
+    for d in config.domains:
+        if d.name not in matrix.columns:
             continue
-        strong = matrix[matrix[cap.name] >= threshold]["name"].tolist()
-        result[cap.name] = strong
+        result[d.name] = matrix[matrix[d.name] >= threshold]["name"].tolist()
     return result
 
 
-def team_gaps(
-    averages: pd.Series, threshold: float = 3.0
-) -> List[str]:
-    """Capability areas where the team average is below ``threshold``."""
+def team_gaps(averages: pd.Series, threshold: float = 3.0) -> List[str]:
+    """Domains where the team average is below ``threshold``."""
     return [name for name, score in averages.items() if score < threshold]

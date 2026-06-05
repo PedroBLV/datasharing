@@ -1,93 +1,406 @@
-# Capability areas for the skills matrix assessment.
+# Capabilities — the individual items people rate in the skills matrix.
 #
-# This file is intentionally kept outside the application code so the
-# skills matrix can evolve without a code change (see design principle 11
-# in the delivery plan). Each capability area has a relative weight used
-# when rolling individual question scores up into an overall score, plus
-# a short description shown in the UI.
+# Each capability belongs to a domain (see domains.yaml) and is rated on
+# both the Knowledge and Delivery dimensions on the shared 0-5 scale.
 #
-# To add, remove or re-weight a capability area, edit this file and make
-# sure every question in questions.yaml references a capability id that
-# exists here.
+# Fields:
+#   id          Stable unique identifier (do not reuse for new meanings —
+#               historical responses are keyed on it).
+#   domain      Domain id from domains.yaml.
+#   name        Display name shown to the respondent.
+#   description Plain-language definition so two people rate the same
+#               thing the same way. Shown as first-class content, not a
+#               hidden note.
+#   weight      Optional relative weight within its domain (default 1.0).
+#   levels      Optional per-capability scoring guidance overriding the
+#               shared 0-5 scale, for capabilities where specific wording
+#               helps. Keys are 0-5; missing keys fall back to the shared
+#               maturity scale.
+#
+# Add, remove or re-describe capabilities freely; the app loads them at
+# runtime and validates them against domains.yaml.
 
-version: 1
-
-# Maturity levels are shared across every capability area. The numeric
-# score a person gives on a question maps directly onto these levels.
-maturity_levels:
-  1:
-    label: Awareness
-    description: I understand the concept.
-  2:
-    label: Practitioner
-    description: I have experimented with it.
-  3:
-    label: Builder
-    description: I have built a working prototype.
-  4:
-    label: Delivery-capable
-    description: I have delivered it in a client/project context.
-  5:
-    label: Production/leadership-capable
-    description: I have productionised it or led others in delivering it.
+version: 2
 
 capabilities:
-  - id: ai_fundamentals
-    name: AI Fundamentals
-    weight: 1.0
-    description: Core concepts underpinning modern AI and machine learning.
+  # ------------------------------------------------------------------ #
+  # AI & ML Foundations
+  # ------------------------------------------------------------------ #
+  - id: machine_learning
+    domain: ai_ml_foundations
+    name: Machine Learning
+    description: >
+      Supervised and unsupervised learning: framing problems, training,
+      evaluating and avoiding common pitfalls like leakage and overfitting.
 
-  - id: generative_ai
-    name: Generative AI
-    weight: 1.2
-    description: Working with large language models and generative systems.
+  - id: deep_learning
+    domain: ai_ml_foundations
+    name: Deep Learning
+    description: >
+      Neural networks and architectures (CNNs, RNNs, transformers),
+      training dynamics and when deep learning is the right tool.
+
+  - id: statistics
+    domain: ai_ml_foundations
+    name: Statistics
+    description: >
+      Statistical inference, experimental design, uncertainty and
+      significance — the reasoning behind sound analysis.
+
+  - id: forecasting
+    domain: ai_ml_foundations
+    name: Forecasting
+    description: >
+      Time-series modelling and forecasting, including seasonality,
+      drivers and evaluating forecast quality.
+
+  - id: optimisation
+    domain: ai_ml_foundations
+    name: Optimisation
+    description: >
+      Mathematical and combinatorial optimisation — formulating objectives
+      and constraints and solving them.
+
+  - id: computer_vision
+    domain: ai_ml_foundations
+    name: Computer Vision
+    description: >
+      Image and video understanding: classification, detection,
+      segmentation and multimodal vision tasks.
+
+  - id: nlp
+    domain: ai_ml_foundations
+    name: Natural Language Processing
+    description: >
+      Classical and neural NLP: text representation, classification,
+      extraction and language understanding.
+
+  - id: synthetic_data
+    domain: ai_ml_foundations
+    name: Synthetic Data
+    description: >
+      Generating and using synthetic data for augmentation, privacy and
+      testing, and understanding its limits.
+
+  - id: simulation_abm
+    domain: ai_ml_foundations
+    name: Simulation & Agent-Based Modelling
+    description: >
+      Simulation and agent-based modelling to explore complex systems and
+      emergent behaviour.
+
+  # ------------------------------------------------------------------ #
+  # Generative AI & Agents
+  # ------------------------------------------------------------------ #
+  - id: prompt_engineering
+    domain: genai_agents
+    name: Prompt Engineering
+    description: >
+      Designing, structuring and iterating prompts (and prompt templates)
+      for reliable, controllable LLM behaviour.
 
   - id: rag
-    name: RAG & Knowledge Systems
-    weight: 1.2
-    description: Retrieval-augmented generation and knowledge grounding.
+    domain: genai_agents
+    name: Retrieval-Augmented Generation (RAG)
+    description: >
+      Designing systems that retrieve relevant information from trusted
+      sources to ground LLM responses — chunking, embeddings, retrieval,
+      re-ranking, citations and evaluation.
+    levels:
+      0: Has not come across RAG.
+      1: Understands what RAG is and when it may be useful.
+      2: Has experimented with basic document retrieval and prompting.
+      3: Can build a working RAG prototype with vector search.
+      4: Can deliver RAG in a client/project context with evaluation and security controls.
+      5: >
+        Leads production RAG delivery and explains trade-offs around
+        retrieval, grounding, latency, cost, access control and
+        hallucination risk.
 
-  - id: agentic_ai
-    name: Agentic AI
-    weight: 1.2
-    description: Tool-using, multi-step autonomous AI systems.
+  - id: fine_tuning
+    domain: genai_agents
+    name: Fine-Tuning
+    description: >
+      Adapting models via fine-tuning, instruction tuning or preference
+      methods, and knowing when adaptation beats prompting or RAG.
+
+  - id: llm_selection
+    domain: genai_agents
+    name: LLM Selection
+    description: >
+      Choosing models for a use case, weighing capability, latency, cost,
+      context window, hosting and licensing trade-offs.
+
+  - id: agentic_systems
+    domain: genai_agents
+    name: Agentic Systems
+    description: >
+      Building tool-using, multi-step agents that plan and act, including
+      tool design, control flow and guardrails.
+    levels:
+      0: Has not come across agentic systems.
+      1: Understands what agents are and the basic loop of plan-act-observe.
+      2: Has experimented with an agent framework or simple tool use.
+      3: Can build a working single-agent prototype with tools.
+      4: Can deliver an agentic system in a client/project context with guardrails.
+      5: >
+        Leads production agent delivery and reasons about reliability,
+        cost, safety and evaluation of autonomous behaviour.
+
+  - id: multi_agent
+    domain: genai_agents
+    name: Multi-Agent Architectures
+    description: >
+      Coordinating multiple agents — orchestration, roles, communication
+      and managing emergent complexity.
+
+  - id: genai_evaluation
+    domain: genai_agents
+    name: Evaluation
+    description: >
+      Measuring generative system quality — datasets, metrics,
+      LLM-as-judge, human review and regression testing.
+    levels:
+      0: Has not considered how to evaluate generative systems.
+      1: Aware that evaluation matters and of some metrics.
+      2: Has run ad-hoc or manual evaluations with guidance.
+      3: Can design and run a repeatable evaluation independently.
+      4: Can lead evaluation strategy across a delivery, including human review.
+      5: >
+        Sets evaluation standards, builds automated eval pipelines and
+        explains trade-offs between metrics, cost and signal.
+
+  - id: vector_databases
+    domain: genai_agents
+    name: Vector Databases
+    description: >
+      Storing and querying embeddings at scale — indexing, similarity
+      search, filtering and operational concerns.
+
+  - id: graph_ai
+    domain: genai_agents
+    name: Graph AI / Knowledge Graphs
+    description: >
+      Knowledge graphs and graph-based retrieval/reasoning, and combining
+      them with LLMs (e.g. GraphRAG).
+
+  # ------------------------------------------------------------------ #
+  # Engineering & Platforms
+  # ------------------------------------------------------------------ #
+  - id: python
+    domain: engineering_platforms
+    name: Python
+    description: >
+      Idiomatic, maintainable Python for AI/data work, including testing
+      and packaging.
+
+  - id: software_engineering
+    domain: engineering_platforms
+    name: Software Engineering
+    description: >
+      Sound engineering practice — design, version control, testing, code
+      review and maintainability.
+
+  - id: apis
+    domain: engineering_platforms
+    name: APIs
+    description: >
+      Designing and integrating APIs (REST, async, streaming) that expose
+      and consume AI services.
+
+  - id: cloud_platforms
+    domain: engineering_platforms
+    name: Cloud Platforms
+    description: >
+      Building on AWS/Azure/GCP — core services, identity, networking and
+      cost-aware design.
+
+  - id: containers
+    domain: engineering_platforms
+    name: Containers
+    description: >
+      Containerising and orchestrating workloads with Docker and
+      Kubernetes.
+
+  - id: cicd
+    domain: engineering_platforms
+    name: CI/CD
+    description: >
+      Automated build, test and deployment pipelines and
+      infrastructure-as-code.
 
   - id: data_engineering
+    domain: engineering_platforms
     name: Data Engineering
-    weight: 1.0
-    description: Pipelines, storage and preparation of data at scale.
+    description: >
+      Ingestion, transformation, storage and orchestration of data, and
+      ensuring its quality and lineage.
 
-  - id: ml_engineering
-    name: Machine Learning Engineering
-    weight: 1.0
-    description: Training, packaging and serving machine learning models.
+  - id: infrastructure_design
+    domain: engineering_platforms
+    name: Infrastructure Design
+    description: >
+      Architecting scalable, resilient and secure infrastructure for AI
+      workloads.
 
-  - id: cloud_platform
-    name: Cloud & Platform Engineering
-    weight: 1.0
-    description: Infrastructure, deployment and platform operations.
+  - id: edge_ai
+    domain: engineering_platforms
+    name: Edge AI Deployment
+    description: >
+      Running models on edge/constrained devices — optimisation,
+      quantisation and offline operation.
 
-  - id: evaluation_testing
-    name: Evaluation & Testing
-    weight: 1.1
-    description: Measuring quality, correctness and regression of AI systems.
+  - id: mlops
+    domain: engineering_platforms
+    name: MLOps
+    description: >
+      Operationalising ML — pipelines, model registries, reproducibility
+      and continuous delivery of models.
+
+  - id: llmops
+    domain: engineering_platforms
+    name: LLMOps
+    description: >
+      Operating LLM applications — prompt/version management, caching,
+      guardrails, cost control and rollout.
+
+  - id: monitoring
+    domain: engineering_platforms
+    name: Monitoring & Observability
+    description: >
+      Monitoring AI systems in production — quality, drift, latency, cost
+      and alerting.
+
+  # ------------------------------------------------------------------ #
+  # Governance & Assurance
+  # ------------------------------------------------------------------ #
+  - id: governance
+    domain: governance_assurance
+    name: Governance
+    description: >
+      AI governance frameworks, policies, model risk management and
+      accountability.
 
   - id: responsible_ai
-    name: Responsible AI & Governance
-    weight: 1.1
-    description: Safety, fairness, privacy and governance of AI.
+    domain: governance_assurance
+    name: Responsible AI
+    description: >
+      Embedding ethics, safety and societal impact into how AI is built
+      and used.
 
-  - id: delivery_consulting
-    name: Delivery & Consulting
-    weight: 1.0
-    description: Shaping, scoping and delivering engagements.
+  - id: security
+    domain: governance_assurance
+    name: Security
+    description: >
+      Securing AI systems — data protection, prompt injection, model and
+      supply-chain risks.
 
-  - id: client_communication
-    name: Client Communication
-    weight: 0.9
-    description: Explaining and influencing with technical and non-technical audiences.
+  - id: compliance
+    domain: governance_assurance
+    name: Compliance
+    description: >
+      Applying regulatory and contractual requirements (e.g. EU AI Act,
+      GDPR) to AI delivery.
+
+  - id: bias_fairness
+    domain: governance_assurance
+    name: Bias & Fairness
+    description: >
+      Detecting, measuring and mitigating bias and fairness issues across
+      the lifecycle.
+
+  - id: explainability
+    domain: governance_assurance
+    name: Explainability (XAI)
+    description: >
+      Making model behaviour and decisions interpretable to technical and
+      business audiences.
+
+  - id: human_in_the_loop
+    domain: governance_assurance
+    name: Human-in-the-Loop Design
+    description: >
+      Designing human oversight, review and escalation into AI workflows.
+
+  # ------------------------------------------------------------------ #
+  # Delivery & Consulting
+  # ------------------------------------------------------------------ #
+  - id: discovery_workshops
+    domain: delivery_consulting
+    name: Discovery Workshops
+    description: >
+      Running discovery and ideation sessions to surface needs, use cases
+      and value.
+
+  - id: requirements_gathering
+    domain: delivery_consulting
+    name: Requirements Gathering
+    description: >
+      Eliciting, structuring and prioritising requirements and success
+      criteria.
+
+  - id: solution_design
+    domain: delivery_consulting
+    name: Solution Design
+    description: >
+      Designing end-to-end solutions that balance value, feasibility and
+      risk.
+
+  - id: stakeholder_management
+    domain: delivery_consulting
+    name: Stakeholder Management
+    description: >
+      Building trust and managing expectations across diverse
+      stakeholders.
+
+  - id: delivery_leadership
+    domain: delivery_consulting
+    name: Delivery Leadership
+    description: >
+      Leading delivery end to end — planning, risk, quality and team
+      coordination.
 
   - id: production_readiness
+    domain: delivery_consulting
     name: Production Readiness
-    weight: 1.1
-    description: Monitoring, reliability and operating AI in production.
+    description: >
+      Taking AI from prototype to a reliable, supportable production
+      service.
+
+  # ------------------------------------------------------------------ #
+  # Commercial & Market Engagement
+  # ------------------------------------------------------------------ #
+  - id: pre_sales
+    domain: commercial_market
+    name: Pre-Sales
+    description: >
+      Supporting bids and proposals — scoping, estimating and shaping
+      winning solutions.
+
+  - id: storytelling
+    domain: commercial_market
+    name: Storytelling
+    description: >
+      Communicating ideas and value through compelling narrative and
+      demos.
+
+  - id: executive_communication
+    domain: commercial_market
+    name: Executive Communication
+    description: >
+      Engaging senior stakeholders with clear, outcome-focused
+      communication.
+
+  - id: commercial_awareness
+    domain: commercial_market
+    name: Commercial Awareness
+    description: >
+      Understanding pricing, margin, value and the commercial mechanics of
+      delivery.
+
+  - id: market_engagement
+    domain: commercial_market
+    name: Market & Industry Awareness
+    description: >
+      Keeping current with the AI market, competitors and industry trends
+      to advise clients.
