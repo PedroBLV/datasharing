@@ -1,0 +1,179 @@
+# Skills matrix questions.
+#
+# Each question belongs to a capability_area (must match an id in
+# capabilities.yaml). Questions are answered on the shared 1-5 maturity
+# scale defined in capabilities.yaml, so they assess practical and
+# delivery experience rather than only theoretical awareness.
+#
+# Fields:
+#   id              Unique, stable identifier (do not reuse old ids for
+#                   new questions - historical responses are keyed on it).
+#   capability_area Capability id from capabilities.yaml.
+#   text            The question shown to the respondent.
+#   weight          Relative importance within its capability area.
+#   response_type   Currently only "maturity_1_5" is supported.
+#
+# Add or edit questions freely; the application loads them at runtime.
+
+version: 1
+default_response_type: maturity_1_5
+
+questions:
+  # --- AI Fundamentals ---
+  - id: ai_fundamentals_core
+    capability_area: ai_fundamentals
+    text: Rate your experience with core machine learning concepts (training, evaluation, overfitting, bias/variance).
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: ai_fundamentals_llm_basics
+    capability_area: ai_fundamentals
+    text: Rate your understanding of how large language models work (tokens, context windows, embeddings).
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Generative AI ---
+  - id: genai_prompting
+    capability_area: generative_ai
+    text: Rate your experience designing and iterating on prompts for production use cases.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: genai_app_building
+    capability_area: generative_ai
+    text: Rate your experience building applications on top of LLM APIs.
+    weight: 1.1
+    response_type: maturity_1_5
+  - id: genai_finetuning
+    capability_area: generative_ai
+    text: Rate your experience fine-tuning or adapting generative models.
+    weight: 0.9
+    response_type: maturity_1_5
+
+  # --- RAG & Knowledge Systems ---
+  - id: rag_core
+    capability_area: rag
+    text: Rate your experience with Retrieval-Augmented Generation.
+    weight: 1.2
+    response_type: maturity_1_5
+  - id: rag_vector_stores
+    capability_area: rag
+    text: Rate your experience with vector stores, embeddings and chunking strategies.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: rag_quality
+    capability_area: rag
+    text: Rate your experience improving retrieval quality and grounding (re-ranking, hybrid search, evaluation).
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Agentic AI ---
+  - id: agentic_core
+    capability_area: agentic_ai
+    text: Rate your experience building agentic systems that use tools and take multiple steps.
+    weight: 1.2
+    response_type: maturity_1_5
+  - id: agentic_orchestration
+    capability_area: agentic_ai
+    text: Rate your experience orchestrating multi-agent or multi-step workflows.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: agentic_evaluation
+    capability_area: agentic_ai
+    text: Rate your experience evaluating and debugging agent behaviour and reliability.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Data Engineering ---
+  - id: data_pipelines
+    capability_area: data_engineering
+    text: Rate your experience building data pipelines (ingestion, transformation, orchestration).
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: data_quality
+    capability_area: data_engineering
+    text: Rate your experience ensuring data quality, lineage and governance.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Machine Learning Engineering ---
+  - id: mle_training
+    capability_area: ml_engineering
+    text: Rate your experience training and packaging machine learning models.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: mle_serving
+    capability_area: ml_engineering
+    text: Rate your experience serving models and building inference pipelines.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Cloud & Platform Engineering ---
+  - id: cloud_deployment
+    capability_area: cloud_platform
+    text: Rate your experience deploying workloads to cloud platforms (AWS/Azure/GCP).
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: cloud_iac
+    capability_area: cloud_platform
+    text: Rate your experience with infrastructure-as-code and CI/CD.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Evaluation & Testing ---
+  - id: eval_frameworks
+    capability_area: evaluation_testing
+    text: Rate your experience designing evaluation frameworks for AI systems.
+    weight: 1.1
+    response_type: maturity_1_5
+  - id: eval_regression
+    capability_area: evaluation_testing
+    text: Rate your experience setting up automated testing and regression checks for AI outputs.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Responsible AI & Governance ---
+  - id: responsible_safety
+    capability_area: responsible_ai
+    text: Rate your experience addressing safety, bias and fairness in AI systems.
+    weight: 1.1
+    response_type: maturity_1_5
+  - id: responsible_governance
+    capability_area: responsible_ai
+    text: Rate your experience applying governance, privacy and compliance requirements.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Delivery & Consulting ---
+  - id: delivery_scoping
+    capability_area: delivery_consulting
+    text: Rate your experience scoping and shaping AI engagements with clients.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: delivery_leading
+    capability_area: delivery_consulting
+    text: Rate your experience leading delivery of AI projects end to end.
+    weight: 1.1
+    response_type: maturity_1_5
+
+  # --- Client Communication ---
+  - id: comms_explain
+    capability_area: client_communication
+    text: Rate your ability to explain AI trade-offs to non-technical stakeholders.
+    weight: 1.0
+    response_type: maturity_1_5
+  - id: comms_influence
+    capability_area: client_communication
+    text: Rate your experience influencing decisions and managing expectations with clients.
+    weight: 1.0
+    response_type: maturity_1_5
+
+  # --- Production Readiness ---
+  - id: prod_monitoring
+    capability_area: production_readiness
+    text: Rate your experience monitoring and observing AI systems in production.
+    weight: 1.1
+    response_type: maturity_1_5
+  - id: prod_reliability
+    capability_area: production_readiness
+    text: Rate your experience operating reliable, resilient AI services (incidents, rollbacks, SLAs).
+    weight: 1.0
+    response_type: maturity_1_5

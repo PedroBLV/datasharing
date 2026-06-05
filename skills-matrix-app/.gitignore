@@ -1,0 +1,7 @@
+# Local response database and generated exports should not be committed.
+data/responses.db
+exports/*.csv
+exports/*.json
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,93 @@
+# Capability areas for the skills matrix assessment.
+#
+# This file is intentionally kept outside the application code so the
+# skills matrix can evolve without a code change (see design principle 11
+# in the delivery plan). Each capability area has a relative weight used
+# when rolling individual question scores up into an overall score, plus
+# a short description shown in the UI.
+#
+# To add, remove or re-weight a capability area, edit this file and make
+# sure every question in questions.yaml references a capability id that
+# exists here.
+
+version: 1
+
+# Maturity levels are shared across every capability area. The numeric
+# score a person gives on a question maps directly onto these levels.
+maturity_levels:
+  1:
+    label: Awareness
+    description: I understand the concept.
+  2:
+    label: Practitioner
+    description: I have experimented with it.
+  3:
+    label: Builder
+    description: I have built a working prototype.
+  4:
+    label: Delivery-capable
+    description: I have delivered it in a client/project context.
+  5:
+    label: Production/leadership-capable
+    description: I have productionised it or led others in delivering it.
+
+capabilities:
+  - id: ai_fundamentals
+    name: AI Fundamentals
+    weight: 1.0
+    description: Core concepts underpinning modern AI and machine learning.
+
+  - id: generative_ai
+    name: Generative AI
+    weight: 1.2
+    description: Working with large language models and generative systems.
+
+  - id: rag
+    name: RAG & Knowledge Systems
+    weight: 1.2
+    description: Retrieval-augmented generation and knowledge grounding.
+
+  - id: agentic_ai
+    name: Agentic AI
+    weight: 1.2
+    description: Tool-using, multi-step autonomous AI systems.
+
+  - id: data_engineering
+    name: Data Engineering
+    weight: 1.0
+    description: Pipelines, storage and preparation of data at scale.
+
+  - id: ml_engineering
+    name: Machine Learning Engineering
+    weight: 1.0
+    description: Training, packaging and serving machine learning models.
+
+  - id: cloud_platform
+    name: Cloud & Platform Engineering
+    weight: 1.0
+    description: Infrastructure, deployment and platform operations.
+
+  - id: evaluation_testing
+    name: Evaluation & Testing
+    weight: 1.1
+    description: Measuring quality, correctness and regression of AI systems.
+
+  - id: responsible_ai
+    name: Responsible AI & Governance
+    weight: 1.1
+    description: Safety, fairness, privacy and governance of AI.
+
+  - id: delivery_consulting
+    name: Delivery & Consulting
+    weight: 1.0
+    description: Shaping, scoping and delivering engagements.
+
+  - id: client_communication
+    name: Client Communication
+    weight: 0.9
+    description: Explaining and influencing with technical and non-technical audiences.
+
+  - id: production_readiness
+    name: Production Readiness
+    weight: 1.1
+    description: Monitoring, reliability and operating AI in production.
