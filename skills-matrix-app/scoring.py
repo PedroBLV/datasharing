@@ -319,6 +319,19 @@ def _suggested_next_steps(
 # --- Team-level aggregation ----------------------------------------------
 
 
+def latest_per_person(people: pd.DataFrame) -> pd.DataFrame:
+    """One row per person name — the latest by ``date_completed``.
+
+    Team/aggregate views and aggregate exports use this so that a person
+    retaking the assessment counts once. The Individual view still has
+    access to the full history via ``Database.get_people()``.
+    """
+    if people.empty:
+        return people
+    ordered = people.sort_values("date_completed", ascending=False)
+    return ordered.drop_duplicates(subset=["name"], keep="first").reset_index(drop=True)
+
+
 def team_matrix(
     people: pd.DataFrame,
     responses: pd.DataFrame,

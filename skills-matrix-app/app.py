@@ -24,13 +24,14 @@ import export as export_mod
 from config import APP_DIR, ConfigError, load_config
 from database import Database
 from scoring import (
+    build_person_profile,
+    latest_per_person,
     people_strong_in,
     score_person,
     team_averages,
     team_gaps,
     team_matrix,
 )
-from scoring import build_person_profile
 
 st.set_page_config(
     page_title="Skills Matrix Assessment",
@@ -69,76 +70,84 @@ def _guidance_text(config, capability) -> str:
 def render_assessment(config) -> None:
     st.header("Complete your skills assessment")
     st.caption(
-        "Rate every capability on two dimensions: **Knowledge** (do you "
-        "understand it?) and **Delivery** (have you shipped it?). They are "
-        "deliberately separate — knowing a thing and having delivered it "
-        "are not the same."
+        "Rate each capability on **Knowledge** (do you understand it?) and "
+        "**Delivery** (have you shipped it?). One domain per tab — fill them "
+        "in any order, then submit at the bottom."
     )
 
     dims = config.dimensions
-    with st.expander("What do the 0–5 scores mean?", expanded=False):
-        for level in sorted(config.maturity_levels):
-            ml = config.maturity_levels[level]
-            st.markdown(f"**{level} — {ml.label}**: {ml.description}")
-        st.divider()
-        for d in dims:
-            st.markdown(f"**{d.name}** — {d.description}")
+    with st.expander("How the 0–5 scale works", expanded=False):
+        sc, dc = st.columns(2)
+        with sc:
+            st.markdown("**Scale**")
+            for level in sorted(config.maturity_levels):
+                ml = config.maturity_levels[level]
+                st.markdown(f"`{level}` **{ml.label}** — {ml.description}")
+        with dc:
+            st.markdown("**Dimensions**")
+            for d in dims:
+                st.markdown(f"**{d.name}** — {d.description}")
 
     options = _scale_options(config)
     fmt = _scale_label(config)
 
     with st.form("assessment_form", clear_on_submit=False):
-        st.subheader("About you")
-        c1, c2 = st.columns(2)
-        with c1:
+        # About you — compact row at the top.
+        ac1, ac2, ac3, ac4 = st.columns(4)
+        with ac1:
             name = st.text_input("Name *")
-            role = st.text_input("Role", placeholder="e.g. AI Specialist")
-        with c2:
-            team = st.text_input("Team", placeholder="e.g. AI Practice")
-            location = st.text_input("Location", placeholder="e.g. London")
+        with ac2:
+            role = st.text_input("Role", placeholder="AI Specialist")
+        with ac3:
+            team = st.text_input("Team", placeholder="AI Practice")
+        with ac4:
+            location = st.text_input("Location", placeholder="London")
 
+        # One tab per domain — far less to scroll past, far less noise.
+        domain_tabs = st.tabs(
+            [f"{d.name} · {d.weight:.0f}%" for d in config.domains]
+        )
         responses: list = []
-        for domain in config.domains:
+        for tab, domain in zip(domain_tabs, config.domains):
             caps = config.capabilities_for(domain.id)
             if not caps:
                 continue
-            st.divider()
-            st.subheader(f"{domain.name}  ·  {domain.weight:.0f}%")
-            if domain.description:
-                st.caption(domain.description)
+            with tab:
+                if domain.description:
+                    st.caption(domain.description)
+                for cap in caps:
+                    # Capability name + description visible; scoring guidance
+                    # is on the slider's hover tooltip so it doesn't add chrome.
+                    guidance = _guidance_text(config, cap)
+                    help_text = (
+                        (cap.description + "\n\n" if cap.description else "")
+                        + "**Scoring guidance:**\n\n"
+                        + guidance
+                    )
+                    st.markdown(f"**{cap.name}**")
+                    if cap.description:
+                        st.caption(cap.description)
+                    rcols = st.columns(2)
+                    for col, dim in zip(rcols, dims):
+                        with col:
+                            score = st.select_slider(
+                                dim.name,
+                                options=options,
+                                value=0,
+                                format_func=fmt,
+                                key=f"score_{cap.id}_{dim.id}",
+                                help=help_text,
+                            )
+                            responses.append(
+                                {
+                                    "capability_id": cap.id,
+                                    "domain": cap.domain,
+                                    "dimension": dim.id,
+                                    "score": score,
+                                }
+                            )
 
-            for cap in caps:
-                # Capability name, description and scoring guidance are
-                # first-class content so two people rate the same thing the
-                # same way — not hidden notes.
-                st.markdown(f"**{cap.name}**")
-                if cap.description:
-                    st.caption(cap.description)
-                guidance = _guidance_text(config, cap)
-                with st.popover("ℹ️ Scoring guidance"):
-                    st.markdown(f"**How to score {cap.name}:**")
-                    st.markdown(guidance)
-
-                rcols = st.columns(2)
-                for col, dim in zip(rcols, dims):
-                    with col:
-                        score = st.select_slider(
-                            f"{dim.name}",
-                            options=options,
-                            value=0,
-                            format_func=fmt,
-                            key=f"score_{cap.id}_{dim.id}",
-                            help=f"{dim.description}\n\n{guidance}",
-                        )
-                        responses.append(
-                            {
-                                "capability_id": cap.id,
-                                "domain": cap.domain,
-                                "dimension": dim.id,
-                                "score": score,
-                            }
-                        )
-
+        st.markdown("")
         submitted = st.form_submit_button("Submit assessment", type="primary")
 
     if submitted:
@@ -171,25 +180,48 @@ def render_individual(config) -> None:
         st.info("No assessments yet. Complete one in the Assessment tab.")
         return
 
-    people = people.copy()
-    people["label"] = (
-        people["name"] + "  ·  " + people["date_completed"].str.slice(0, 10).fillna("")
+    # Pick a person by name, then (if they have a history) pick which of
+    # their assessments to inspect. Defaults to the most recent.
+    people = people.sort_values("date_completed", ascending=False).reset_index(
+        drop=True
     )
-    default_idx = 0
-    last = st.session_state.get("last_person_id")
-    if last is not None and last in set(people["person_id"]):
-        default_idx = int(people.index[people["person_id"] == last][0])
+    names = list(dict.fromkeys(people["name"]))  # de-duplicate, preserve order
+    default_name = names[0]
+    last_id = st.session_state.get("last_person_id")
+    if last_id is not None:
+        match = people[people["person_id"] == last_id]
+        if not match.empty:
+            default_name = match.iloc[0]["name"]
+    pick = st.columns([2, 2, 1])
+    with pick[0]:
+        chosen_name = st.selectbox(
+            "Person", names, index=names.index(default_name)
+        )
 
-    choice = st.selectbox(
-        "Select a person",
-        options=list(people.index),
-        index=default_idx,
-        format_func=lambda i: people.loc[i, "label"],
-    )
-    person = people.loc[choice].to_dict()
+    history = people[people["name"] == chosen_name].reset_index(drop=True)
+    with pick[1]:
+        if len(history) > 1:
+            assessment_options = list(history.index)
+            default_assessment = 0
+            if last_id in set(history["person_id"]):
+                default_assessment = int(
+                    history.index[history["person_id"] == last_id][0]
+                )
+            chosen_idx = st.selectbox(
+                f"Assessment ({len(history)} total)",
+                options=assessment_options,
+                index=default_assessment,
+                format_func=lambda i: history.loc[i, "date_completed"][:10]
+                + (" (latest)" if i == 0 else ""),
+            )
+        else:
+            chosen_idx = 0
+            st.caption("Only one assessment on record.")
+
+    person = history.loc[chosen_idx].to_dict()
     responses = db.get_responses(person["person_id"])
     if responses.empty:
-        st.warning("This person has no recorded responses.")
+        st.warning("This assessment has no recorded responses.")
         return
 
     profile = build_person_profile(person, responses, config)
@@ -249,28 +281,27 @@ def render_individual(config) -> None:
         for d in profile["development_areas"]:
             st.markdown(f"- {d}")
 
-    st.markdown("##### ⚠️ Knowledge ahead of delivery")
-    st.caption(
-        "Capabilities understood better than they've been shipped — the "
-        "'read about it but never built it' signal."
-    )
-    if profile["knowledge_delivery_gaps"]:
-        gap_df = pd.DataFrame(profile["knowledge_delivery_gaps"])
-        gap_df = gap_df.rename(
-            columns={
-                "capability": "Capability",
-                "knowledge": "Knowledge",
-                "delivery": "Delivery",
-                "gap": "Gap",
-            }
-        )
-        st.dataframe(gap_df, width="stretch", hide_index=True)
-    else:
-        st.caption("None — knowledge and delivery are well matched.")
-
     st.markdown("##### Suggested next steps")
     for step in profile["next_steps"]:
         st.markdown(f"- {step}")
+
+    with st.expander("Knowledge ahead of delivery"):
+        st.caption(
+            "Capabilities understood better than they've been shipped — the "
+            "'read about it but never built it' signal."
+        )
+        if profile["knowledge_delivery_gaps"]:
+            gap_df = pd.DataFrame(profile["knowledge_delivery_gaps"]).rename(
+                columns={
+                    "capability": "Capability",
+                    "knowledge": "Knowledge",
+                    "delivery": "Delivery",
+                    "gap": "Gap",
+                }
+            )
+            st.dataframe(gap_df, width="stretch", hide_index=True)
+        else:
+            st.caption("None — knowledge and delivery are well matched.")
 
     with st.expander("Detailed scores by domain"):
         rows = []
@@ -283,6 +314,28 @@ def render_individual(config) -> None:
             rows.append(row)
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
+    # Show assessment history for this person if there's more than one.
+    if len(history) > 1:
+        with st.expander(f"Assessment history ({len(history)} on record)"):
+            st.caption(
+                "Aggregate views (Team, exports) use only the most recent "
+                "assessment per person."
+            )
+            hist_rows = []
+            for _, h in history.iterrows():
+                hp = db.get_responses(h["person_id"])
+                if hp.empty:
+                    continue
+                hs = score_person(hp, config)["overall"]
+                row = {"Date": h["date_completed"][:10]}
+                for dim in dims:
+                    row[dim.name] = hs.get(dim.id)
+                row["Assessment id"] = h["person_id"][:8]
+                hist_rows.append(row)
+            st.dataframe(
+                pd.DataFrame(hist_rows), width="stretch", hide_index=True
+            )
+
 
 # --- Team view ------------------------------------------------------------
 
@@ -290,11 +343,20 @@ def render_individual(config) -> None:
 def render_team(config) -> None:
     st.header("Team capability view")
     db = get_db()
-    people = db.get_people()
+    all_people = db.get_people()
     responses = db.get_responses()
-    if people.empty:
+    if all_people.empty:
         st.info("No assessments yet. Complete one in the Assessment tab.")
         return
+
+    # Aggregations use only the most recent assessment per person, so
+    # someone retaking the assessment doesn't double-count.
+    people = latest_per_person(all_people)
+    if len(all_people) != len(people):
+        st.caption(
+            f"Aggregating **{len(people)} people** (using the most recent "
+            f"of {len(all_people)} total assessments)."
+        )
 
     dims = config.dimensions
     dim_by_name = {d.name: d for d in dims}
@@ -416,13 +478,23 @@ def _multiselect_filter(label: str, series: pd.Series):
 def render_admin(config) -> None:
     st.header("Admin")
     db = get_db()
-    people = db.get_people()
+    all_people = db.get_people()
     responses = db.get_responses()
 
+    # Aggregate exports use latest assessment per person; raw records keeps
+    # the full history.
+    people = latest_per_person(all_people)
+
     st.markdown("##### Export results")
-    if people.empty:
+    if all_people.empty:
         st.info("No data to export yet.")
     else:
+        if len(all_people) != len(people):
+            st.caption(
+                f"Aggregate exports use the most recent assessment per person "
+                f"({len(people)} of {len(all_people)} total). The raw records "
+                f"export contains the full history."
+            )
         ecols = st.columns(3)
         with ecols[0]:
             st.download_button(
@@ -472,16 +544,20 @@ def render_admin(config) -> None:
     _render_yaml_editor(ctab, "capabilities.yaml")
 
     st.divider()
-    st.markdown("##### Manage people")
-    if not people.empty:
-        view = people[["name", "role", "team", "location", "date_completed"]]
+    st.markdown("##### Manage assessments")
+    if not all_people.empty:
+        view = all_people[["name", "role", "team", "location", "date_completed"]]
         st.dataframe(view, width="stretch", hide_index=True)
         to_delete = st.selectbox(
             "Delete an assessment",
-            options=["—"] + list(people["person_id"]),
+            options=["—"] + list(all_people["person_id"]),
             format_func=lambda pid: "—"
             if pid == "—"
-            else f"{people.set_index('person_id').loc[pid, 'name']} ({pid[:8]})",
+            else (
+                f"{all_people.set_index('person_id').loc[pid, 'name']} · "
+                f"{all_people.set_index('person_id').loc[pid, 'date_completed'][:10]} "
+                f"({pid[:8]})"
+            ),
         )
         if to_delete != "—" and st.button("Delete selected", type="secondary"):
             db.delete_person(to_delete)
